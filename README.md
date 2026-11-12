@@ -94,4 +94,3 @@ bash scripts/build_release_local.sh
 ## 版权及免责
 
 基于/参考 HuaweiPods 等公开协议研究，保留上游署名与 GPL-3.0 许可。15 张内嵌图标与 SVG 均由本项目重新绘制。HUAWEI、HONOR 与 FreeClip 属于各自权利人的商标。本项目不是华为或荣耀的官方产品。
-

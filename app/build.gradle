@@ -1,0 +1,60 @@
+plugins {
+    id 'com.android.application'
+}
+
+def signingEnvironment = [
+        path: System.getenv('HF2_KEYSTORE_PATH'),
+        storePassword: System.getenv('HF2_KEYSTORE_PASSWORD'),
+        alias: System.getenv('HF2_KEY_ALIAS'),
+        keyPassword: System.getenv('HF2_KEY_PASSWORD')
+]
+def canSignRelease = signingEnvironment.values().every { it != null && !it.trim().isEmpty() }
+
+android {
+    namespace 'dev.muuko.honorfreeclip2'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'dev.muuko.honorfreeclip2'
+        minSdk 29
+        targetSdk 34
+        versionCode 21
+        versionName '1.1.0-beta.2'
+    }
+
+    signingConfigs {
+        release {
+            if (canSignRelease) {
+                storeFile file(signingEnvironment.path)
+                storePassword signingEnvironment.storePassword
+                keyAlias signingEnvironment.alias
+                keyPassword signingEnvironment.keyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (canSignRelease) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+// Prevent accidental publication of an unsigned release APK.
+gradle.taskGraph.whenReady { graph ->
+    if (!canSignRelease && graph.allTasks.any { it.name in ['assembleRelease','packageRelease','bundleRelease'] }) {
+        throw new GradleException('Release signing is required. Set HF2_KEYSTORE_PATH, HF2_KEYSTORE_PASSWORD, HF2_KEY_ALIAS and HF2_KEY_PASSWORD.')
+    }
+}
+
+dependencies {
+    // Framework implementation is supplied by LSPosed at runtime.
+    compileOnly 'io.github.libxposed:api:101.0.1'
+}

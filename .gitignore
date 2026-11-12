@@ -1,0 +1,29 @@
+# Gradle and IDE files
+.gradle/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+# Never commit release credentials, keystores, or signed APK outputs
+*.jks
+*.keystore
+*.p12
+*.apk
+*.aab
+*.asc
+release-secrets.env
+.env
+.env.*
+!assets/icons/*.svg
+dist/
+
+# Local diagnostics and sensitive build artifacts
+*.log
+*.hprof
+*.pem
+*.key
+*.pfx
+*.p12
+*.zip
+__pycache__/
