@@ -146,12 +146,10 @@ final class FreeClipProtocol {
                         putIfAccepted(states, FreeClipSetting.HEAD_SHAKE, first(fields, 4));
                     }
                 }
-                // Spatial audio response starts with 2B B4 01 01 18 02 01 <mode> 03 01 <scene>.
-                byte[] signature = hex("2BB40101180201");
-                int at = indexOf(frame, signature, 4);
-                if (at >= 0 && at + 10 < frame.length - 2) {
-                    putIfAccepted(states, FreeClipSetting.SPATIAL_MODE, u(frame[at + 7]));
-                    putIfAccepted(states, FreeClipSetting.SPATIAL_SCENE, u(frame[at + 10]));
+                // Decode validated TLVs; embedded signatures and duplicate fields are invalid.
+                if (feature != null && feature == 0x18) {
+                    putIfAccepted(states, FreeClipSetting.SPATIAL_MODE, first(fields, 2));
+                    putIfAccepted(states, FreeClipSetting.SPATIAL_SCENE, first(fields, 3));
                 }
             }
             if (service == 0x2B && cmd == 0x11)
@@ -222,7 +220,7 @@ final class FreeClipProtocol {
 
     private static List<byte[]> frames(byte[] stream) {
         List<byte[]> result = new ArrayList<>();
-        if (stream == null) return result;
+        if (stream == null || stream.length > 64 * 1024) return result;
         int offset = 0;
         while (offset + 9 <= stream.length) {
             if (u(stream[offset]) != 0x5A || stream[offset + 1] != 0) { offset++; continue; }

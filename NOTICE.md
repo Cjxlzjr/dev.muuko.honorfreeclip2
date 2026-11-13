@@ -9,3 +9,6 @@
 本项目所有 `hf2_*.png` 图标来自 `assets/icons/` 内本项目原创 SVG 的离线渲染；旧版从厂商 APK 提取的图标均未包含在本发布包中。详见 `ASSETS_NOTICE.md`。
 
 HUAWEI、HONOR 和 FreeClip 等商标归各自权利人所有，本项目不隶属于或代表相关厂商。
+
+构建依赖：libxposed API 101.0.1 仅作为 compileOnly 接口，不捆绑框架实现；由 LSPosed 运行时提供。
+JUnit / Robolectric 和 tests/android_stubs 仅用于自动化测试，不随发布 APK 分发。

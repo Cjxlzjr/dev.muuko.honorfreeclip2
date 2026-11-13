@@ -1,8 +1,8 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# HonorFreeClip2 v1.1.0-beta.2, Termux ARM64 builder
+# HonorFreeClip2 v1.1.0-beta.3, Termux ARM64 builder
 # Usage:
-#   bash /sdcard/Download/build_honorfreeclip2_beta2_termux.sh
-#   bash /sdcard/Download/build_honorfreeclip2_beta2_termux.sh /sdcard/Download/your-source.zip
+#   bash /sdcard/Download/build_honorfreeclip2_beta3_termux.sh
+#   bash /sdcard/Download/build_honorfreeclip2_beta3_termux.sh /sdcard/Download/your-source.zip
 # Optional: bash ... /sdcard/Download/your-source.zip release
 # The release mode requires 4 HF2_KEY* environment variables and a persistent keystore.
 set -Eeuo pipefail
@@ -21,16 +21,16 @@ DOWNLOAD=/sdcard/Download
 ZIP="${1:-}"
 if [ -z "$ZIP" ]; then
   for candidate in \
-    "$DOWNLOAD/HonorFreeClip2-v1.1.0-beta.2-source.zip"; do
+    "$DOWNLOAD/HonorFreeClip2-v1.1.0-beta.3-source.zip"; do
     if [ -s "$candidate" ]; then ZIP="$candidate"; break; fi
   done
 fi
-[ -n "$ZIP" ] && [ -s "$ZIP" ] || fail '源码 ZIP 不存在。请把 V1.1.0-beta.2 源码包放进 /sdcard/Download，或把 ZIP 路径作为第一个参数。'
+[ -n "$ZIP" ] && [ -s "$ZIP" ] || fail '源码 ZIP 不存在。请把 V1.1.0-beta.3 源码包放进 /sdcard/Download，或把 ZIP 路径作为第一个参数。'
 
 MODE="${2:-debug}"
 case "$MODE" in debug|release) ;; *) fail "构建类型只能是 debug 或 release，收到：$MODE" ;; esac
 
-PROJECT="${HF2_PROJECT_DIR:-$HOME/HonorFreeClip2-beta2}"
+PROJECT="${HF2_PROJECT_DIR:-$HOME/HonorFreeClip2-beta3}"
 mkdir -p "$PROJECT/logs"
 LOG="$PROJECT/logs/termux-build-$(date +%Y%m%d_%H%M%S).log"
 # Save a complete build log; all project work happens inside Termux private storage.
@@ -150,11 +150,11 @@ if [ "$MODE" = release ]; then
   [ -r "$HF2_KEYSTORE_PATH" ] || fail "签名文件不存在或不可读：$HF2_KEYSTORE_PATH"
   TARGET=':app:assembleRelease'
   APK='app/build/outputs/apk/release/app-release.apk'
-  OUT="$DOWNLOAD/HonorFreeClip2-v1.1.0-beta.2-release.apk"
+  OUT="$DOWNLOAD/HonorFreeClip2-v1.1.0-beta.3-release.apk"
 else
   TARGET=':app:assembleDebug'
   APK='app/build/outputs/apk/debug/app-debug.apk'
-  OUT="$DOWNLOAD/HonorFreeClip2-v1.1.0-beta.2-debug.apk"
+  OUT="$DOWNLOAD/HonorFreeClip2-v1.1.0-beta.3-debug.apk"
 fi
 
 msg "执行 Gradle $TARGET"

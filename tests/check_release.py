@@ -24,8 +24,8 @@ for stem in sorted(expected):
     assert (width,height) == (96,96), (stem,width,height)
 
 gradle = (ROOT/'app/build.gradle').read_text(encoding='utf-8')
-assert re.search(r'versionCode\s+21\b',gradle)
-assert "versionName '1.1.0-beta.2'" in gradle
+assert re.search(r'versionCode\s+22\b',gradle)
+assert "versionName '1.1.0-beta.3'" in gradle
 assert 'HF2_KEYSTORE_PASSWORD' in gradle
 assert (ROOT/'app/src/main/resources/META-INF/xposed/scope.list').read_text(encoding='utf-8').strip() == 'com.hihonor.audioaccessorymanager'
 ui = (ROOT/'app/src/main/java/dev/muuko/honorfreeclip2/SmartAudioPanel.java').read_text(encoding='utf-8')
@@ -38,3 +38,38 @@ for debug_label in ('原始字段', '复制本次 AI 键探测结果', '未进�
     assert debug_label not in ai_section, f'Unexpected AI debug UI: {debug_label}'
 assert not (ROOT/'PRIVATE_ICON_MAPPING.md').exists()
 print('Release static checks passed: 15 SVG/PNG pairs, version, scope, voice disclosure, signing config.')
+
+assert (ROOT / 'LICENSE').read_text(encoding='utf-8').startswith('                    GNU GENERAL PUBLIC LICENSE')
+cert = (ROOT / 'signing-certificate.sha256').read_text().strip()
+assert re.fullmatch(r'[a-f0-9]{64}', cert)
+module = (ROOT/'app/src/main/java/dev/muuko/honorfreeclip2/HonorFreeClip2Module.java').read_text()
+assert 'getDeclaredMethod("c0")' not in module
+assert 'LifecycleHookResolver.resumeMethods' in module
+assert 'Object result = chain.proceed();' in module
+assert 'buildFeatures { buildConfig true }' in gradle
+assert 'verification {' in gradle and 'signingConfig null' in gradle
+for workflow in (ROOT/'.github/workflows').glob('*.yml'):
+    text = workflow.read_text()
+    for ref in re.findall(r'uses:\s*([^\s#]+)', text):
+        assert re.fullmatch(r'[A-Za-z0-9_.\-/]+@[a-f0-9]{40}', ref), (workflow.name, ref)
+release = (ROOT/'.github/workflows/release.yml').read_text()
+assert 'workflow_dispatch:' in release and 'push:' not in release and 'tags:' not in release
+assert '--draft --prerelease' in release and 'confirm_signing' in release
+assert 'if: always()' in release and 'rm -rf "$RUNNER_TEMP/hf2_keys"' in release
+assert 'scripts/prepare_dist.sh release' in release
+for svg in svgdir.glob('*.svg'):
+    for element in ElementTree.parse(svg).iter():
+        assert element.tag.rsplit('}', 1)[-1] != 'image', svg.name
+        assert not any(k.rsplit('}', 1)[-1] == 'href' for k in element.attrib), svg.name
+# Check distributable source locations; generated caches and test fixtures are intentionally excluded.
+secret_patterns = [r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',
+                   r'gh[pousr]_[A-Za-z0-9]{30,}', r'github_pat_[A-Za-z0-9_]{30,}']
+for base in [ROOT/'app/src/main', ROOT/'assets', ROOT/'scripts', ROOT/'.github']:
+    for path in base.rglob('*'):
+        if not path.is_file() or path.suffix == '.png':
+            continue
+        assert path.suffix not in {'.jks', '.keystore', '.p12', '.pem', '.key'}, path
+        source = path.read_text(encoding='utf-8')
+        for pattern in secret_patterns:
+            assert not re.search(pattern, source), f'Potential credential in {path.relative_to(ROOT)}'
+print('PASS: lifecycle fallback, unsigned validation, pinned CI, draft-only release, certificate and source privacy guards')

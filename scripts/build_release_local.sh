@@ -14,14 +14,5 @@ else
 fi
 python3 tests/check_release.py
 bash tests/run_host_tests.sh
-"$GRADLE" :app:assembleRelease --no-daemon --stacktrace
-APK=app/build/outputs/apk/release/app-release.apk
-[ -s "$APK" ] || { echo 'ERROR: signed release APK missing' >&2; exit 1; }
-: "${ANDROID_HOME:?ERROR: Set ANDROID_HOME to Android SDK 35}"
-APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
-[ -x "$APKSIGNER" ] || { echo "ERROR: no apksigner: $APKSIGNER" >&2; exit 1; }
-mkdir -p dist
-cp "$APK" dist/HonorFreeClip2-v1.1.0-beta.2-release.apk
-"$APKSIGNER" verify --verbose --print-certs dist/HonorFreeClip2-v1.1.0-beta.2-release.apk
-(cd dist && sha256sum HonorFreeClip2-v1.1.0-beta.2-release.apk > SHA256SUMS.txt)
-echo 'Created dist/HonorFreeClip2-v1.1.0-beta.2-release.apk and dist/SHA256SUMS.txt'
+"$GRADLE" :app:testVerificationUnitTest :app:lintVerification :app:assembleRelease --no-daemon --stacktrace
+bash scripts/prepare_dist.sh release

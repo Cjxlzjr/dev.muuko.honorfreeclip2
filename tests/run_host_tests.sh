@@ -33,8 +33,8 @@ java -cp "$JAVA_TMP" dev.muuko.honorfreeclip2.QuickTransportSelfTest
 # compile modified Android-facing coordinator + RFCOMM transport against test-only stubs
 javac -encoding UTF-8 -d "$JAVA_TMP" \
   $(find "$ROOT/tests/android_stubs" -name '*.java') \
-  "$SRC/ModuleConstants.java" "$SRC/FreeClipTransport.java" "$SRC/ControlCoordinator.java" \
-  "$ROOT/tests/TransportPoolSmokeTest.java" "$ROOT/tests/AiKeyTransportSmokeTest.java" "$ROOT/tests/MultiPresetTransportSmokeTest.java" \
+  "$SRC/LifecycleHookResolver.java" "$SRC/TransportTaskRunner.java" "$SRC/ModuleConstants.java" "$SRC/FreeClipTransport.java" "$SRC/ControlCoordinator.java" \
+  "$ROOT/tests/LifecycleHookResolverSelfTest.java" "$ROOT/tests/ProtocolRobustnessSelfTest.java" "$ROOT/tests/TransportTaskRunnerSelfTest.java" "$ROOT/tests/TransportRecoverySmokeTest.java" "$ROOT/tests/TransportPoolSmokeTest.java" "$ROOT/tests/AiKeyTransportSmokeTest.java" "$ROOT/tests/MultiPresetTransportSmokeTest.java" \
   "$SRC/FreeClipSetting.java" "$SRC/FreeClipProtocol.java" "$SRC/EqualizerState.java" "$SRC/EqualizerCodec.java" \
   "$SRC/EqSavePolicy.java" "$SRC/DirectEqualizerCodec.java" "$SRC/CustomPresetPolicy.java" "$SRC/SoundPresetCatalog.java" \
   "$SRC/AiKeyActionCodec.java" "$SRC/AiKeyProbeCodec.java" "$SRC/ReadIdlePolicy.java" "$SRC/ReadBatchPolicy.java" "$SRC/SocketReusePolicy.java"
@@ -48,3 +48,8 @@ java -cp "$JAVA_TMP" dev.muuko.honorfreeclip2.MultiPresetTransportSmokeTest
 "$PYTHON" "$ROOT/tests/check_release.py"
 
 "$PYTHON" "$ROOT/tests/check_bottom_sheets.py"
+
+java -cp "$JAVA_TMP" dev.muuko.honorfreeclip2.LifecycleHookResolverSelfTest
+java -cp "$JAVA_TMP" dev.muuko.honorfreeclip2.ProtocolRobustnessSelfTest
+java -cp "$JAVA_TMP" dev.muuko.honorfreeclip2.TransportTaskRunnerSelfTest
+java -cp "$JAVA_TMP" dev.muuko.honorfreeclip2.TransportRecoverySmokeTest

@@ -26,7 +26,7 @@ final class EarphoneDetailsInjector {
     static void inject(Activity activity) {
         if (activity.isFinishing() || activity.isDestroyed()) return;
         DeviceMatcher.Result match = DeviceMatcher.forHomePage(activity);
-        Log.i(ModuleConstants.TAG, "EarphoneDetails page device match=" + match);
+        CompatibilityDiagnostics.event("home_device", match.name());
         if (match != DeviceMatcher.Result.FREECLIP2) {
             removeStalePanel(activity);
             return;
@@ -37,7 +37,10 @@ final class EarphoneDetailsInjector {
             View decor = activity.getWindow().getDecorView();
             decor.postDelayed(() -> {
                 if (!activity.isFinishing() && !activity.isDestroyed()) {
-                    try { injectNow(activity); }
+                        try {
+                            if (DeviceMatcher.forHomePage(activity) == DeviceMatcher.Result.FREECLIP2)
+                                injectNow(activity);
+                        }
                     catch (Throwable error) {
                         Log.w(ModuleConstants.TAG,
                                 "EarphoneDetails delayed injection failed", error);
@@ -61,8 +64,7 @@ final class EarphoneDetailsInjector {
 
     private static void removeStalePanel(Activity a) {
         try {
-            Object binding = Reflection.field(a, "A");
-            Object scroll = Reflection.field(binding, "j");
+            Object scroll = a.findViewById(android.R.id.content);
             if (scroll instanceof View) {
                 View old = findPanel((View) scroll);
                 if (old != null && old.getParent() instanceof ViewGroup) {
@@ -73,25 +75,25 @@ final class EarphoneDetailsInjector {
     }
 
     private static boolean injectNow(Activity activity) {
-        Object binding;
+        ViewGroup scroll = null;
+        View preferred = null;
         try {
-            binding = Reflection.field(activity, "A");
-        } catch (ReflectiveOperationException e) {
-            Log.w(ModuleConstants.TAG, "EarphoneDetails binding field A unavailable", e);
-            return false;
-        }
-        if (binding == null) return false;
-
-        ViewGroup scroll;
-        View preferred;
-        try {
+            Object binding = Reflection.field(activity, "A");
             Object j = Reflection.field(binding, "j");
             Object i = Reflection.field(binding, "i");
             scroll = j instanceof ViewGroup ? (ViewGroup) j : null;
             preferred = i instanceof View ? (View) i : null;
-        } catch (ReflectiveOperationException e) {
-            Log.w(ModuleConstants.TAG, "EarphoneDetails binding content fields unavailable", e);
-            return false;
+            View root = activity.findViewById(android.R.id.content);
+            if (scroll != null && (!(root instanceof ViewGroup)
+                    || !isDescendant(scroll, (ViewGroup) root))) scroll = null;
+        } catch (ReflectiveOperationException | ClassCastException ignored) { }
+        if (scroll == null) {
+            scroll = HomeLayoutResolver.findUniqueScroll(activity);
+            preferred = null;
+            CompatibilityDiagnostics.event("home_binding", scroll == null
+                    ? "unavailable no_unique_layout" : "dynamic_scroll matched");
+        } else {
+            CompatibilityDiagnostics.event("home_binding", "known_binding matched");
         }
         if (scroll == null) return false;
         // An existing panel may have survived a quick resume. Trigger a throttled
@@ -99,6 +101,7 @@ final class EarphoneDetailsInjector {
         View existing = findPanel(scroll);
         if (existing != null) {
             SmartAudioPanel.onHomeResumed(existing);
+            CompatibilityDiagnostics.event("home_layout", "existing_panel reused");
             return true;
         }
 
@@ -123,6 +126,7 @@ final class EarphoneDetailsInjector {
             int beforeOriginalMore = findOriginalMoreStart(container);
             container.addView(panel, beforeOriginalMore,
                     new LinearLayout.LayoutParams(-1, -2));
+            CompatibilityDiagnostics.event("home_layout", "verified_vertical_parent inserted");
             Log.i(ModuleConstants.TAG, "Injected V0.5 controls before native more section"
                     + " at index=" + beforeOriginalMore + "/" + container.getChildCount());
             return true;
@@ -132,10 +136,12 @@ final class EarphoneDetailsInjector {
         // only attempted if that content contains "更多设置". Never overlay the
         // fixed back button, picture, or battery indicators.
         if (wrapScrollContent(activity, scroll)) {
+            CompatibilityDiagnostics.event("home_layout", "verified_scroll_wrapper inserted");
             Log.i(ModuleConstants.TAG,
                     "Injected controls into EarphoneDetailsActivity wrapped scroll content");
             return true;
         }
+        CompatibilityDiagnostics.event("home_layout", "no_safe_parent skipped");
         Log.w(ModuleConstants.TAG,
                 "EarphoneDetails has no verified scrolling insertion point; skipped safely");
         return false;

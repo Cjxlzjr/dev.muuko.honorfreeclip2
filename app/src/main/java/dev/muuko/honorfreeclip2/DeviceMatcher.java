@@ -107,7 +107,8 @@ final class DeviceMatcher {
             // Prevent a recursive lookup when a vendor returns an address as the name.
             if (name == null || BluetoothAdapter.checkBluetoothAddress(name)) return Result.UNKNOWN;
             return fromAddressOrName(name);
-        } catch (Throwable ignored) { return Result.UNKNOWN; }
+        } catch (SecurityException denied) { return Result.UNKNOWN; }
+        catch (Throwable ignored) { return Result.UNKNOWN; }
     }
 
     private static Result fromAddressOrName(String value) {

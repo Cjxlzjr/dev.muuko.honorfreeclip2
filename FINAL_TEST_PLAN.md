@@ -1,4 +1,4 @@
-# HonorFreeClip2 v1.1.0-beta.2 — 真机发布验收表
+# HonorFreeClip2 v1.1.0-beta.3 — 真机发布验收表
 
 **执行状态：待在目标设备运行。** 本文件是可执行测试计划，不是虚构的真机通过报告。每个项目需填写测试时间、系统/耳机固件版本、通过/失败、关键截图或日志文件。
 
@@ -7,7 +7,7 @@
 - 目标：Magic8 Pro / MagicOS 11.0.0.117 / FreeClip 2 / 7.0.0.526。
 - LSPosed 仅给 `com.hihonor.audioaccessorymanager` 设置作用域；不要包含系统核心进程。
 - 记录测试前已保存的预设名称和每段增益。关闭可能并发操作耳机的管理 APP。
-- 使用发布候选版签名 APK；先验证签名证书和 `versionCode=21`。
+- 使用发布候选版签名 APK；先验证签名证书和 `versionCode=22`。
 - 如果原厂设备页无法加载，先禁用本模块做对照；曾发现 `modelId is empty` 的设备信息异常可通过重新配对恢复，详见故障排查。
 
 ## 回归测试矩阵
@@ -51,9 +51,21 @@ FreeClip 2 固件：
 ## 获取诊断日志
 
 ```sh
-unzip -p /sdcard/Download/HonorFreeClip2-v1.1.0-beta.2-release-source.zip collect_v11.sh > ~/collect_v11.sh
+unzip -p /sdcard/Download/HonorFreeClip2-v1.1.0-beta.3-release-source.zip collect_v11.sh > ~/collect_v11.sh
 su
 sh /data/data/com.termux/files/home/collect_v11.sh
 ```
 
 诊断日志中可能包含设备地址、设备名等信息，分享前请脱敏。
+
+## beta.3 追加兼容性回归
+
+| ID | 步骤 | 通过标准 | 状态 |
+|---|---|---|---|
+| C01 | 当前音频管理 APK 打开主页与功能控制页，往返 10 次 | 无重复面板、原厂按钮/返回正常；HF2_COMPAT 有版本、Hook、布局结果 | 待真机 |
+| C02 | 在另一版本原厂音频管理 APK 上重复 C01 | 生命周期 Hook 命中；布局匹配或安全跳过；记录准确 APK 版本 | 待真机 |
+| C03 | 同步、普通设置写入、EQ 写入时分别断开并重连耳机 | 无过期写入、无假成功，重连后状态重新同步 | 待真机 |
+| C04 | 后台/前台、快速返回、权限撤回与蓝牙开关 | 旧值不再可编辑，原厂功能保持可用，无卡死或崩溃 | 待真机 |
+| C05 | 非中文页面或更改布局的 APK | 无安全锚点时只跳过模块 UI，原厂页面可操作 | 待真机 |
+
+记录原厂音频管理 APK 的 versionName/versionCode，使用 collect_compat_logs.sh 导出兼容性日志。

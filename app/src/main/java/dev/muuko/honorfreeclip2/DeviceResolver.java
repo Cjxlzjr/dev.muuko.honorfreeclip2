@@ -73,7 +73,8 @@ final class DeviceResolver {
                 match = device;
             }
             return match;
-        } catch (Throwable ignored) { return null; }
+        } catch (SecurityException denied) { return null; }
+        catch (Throwable ignored) { return null; }
     }
 
     private static BluetoothDevice fromAddress(String address) {

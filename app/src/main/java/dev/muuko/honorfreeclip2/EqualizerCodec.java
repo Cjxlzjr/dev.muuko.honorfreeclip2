@@ -40,6 +40,7 @@ final class EqualizerCodec {
             Integer supportedField = one(fields.get(1));
             boolean supported = supportedField != null && supportedField == 1;
             Integer countField = one(fields.get(5));
+            if (countField != null && (countField < 1 || countField > 10)) continue;
             byte[] rawCurve = fields.get(6);
             int bandCount = countField != null && countField >= 1 && countField <= 10 ? countField
                     : rawCurve != null && rawCurve.length >= 1 && rawCurve.length <= 10 ? rawCurve.length : 10;
@@ -80,11 +81,12 @@ final class EqualizerCodec {
 
     private static List<EqualizerState.Preset> parsePresets(byte[] data) {
         if (data == null || data.length == 0) return Collections.emptyList();
-        if (data.length % CUSTOM_RECORD_SIZE != 0) return null;
+        if (data.length % CUSTOM_RECORD_SIZE != 0 || data.length > 3 * CUSTOM_RECORD_SIZE) return null;
         List<EqualizerState.Preset> results = new ArrayList<>();
+        java.util.Set<Integer> seen = new java.util.HashSet<>();
         for (int p = 0; p < data.length; p += CUSTOM_RECORD_SIZE) {
             int id = u(data[p]), bands = u(data[p + 1]);
-            if (id < 0x64 || id > 0x66 || bands != 10) return null;
+            if (id < 0x64 || id > 0x66 || bands != 10 || !seen.add(id)) return null;
             List<Integer> gains = parseGains(Arrays.copyOfRange(data,p+2,p+12));
             if (gains == null) return null;
             String name = safeName(Arrays.copyOfRange(data,p+12,p+36));
