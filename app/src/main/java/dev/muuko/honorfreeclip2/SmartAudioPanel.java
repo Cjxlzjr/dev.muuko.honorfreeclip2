@@ -110,6 +110,7 @@ final class SmartAudioPanel {
         }
         void resumeSync() {
             if (!isAttachedToWindow()) return;
+            session.onResumed();
             startReceiver();
             scheduleAutoRead(260);
         }

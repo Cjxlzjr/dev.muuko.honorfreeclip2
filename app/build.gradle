@@ -18,8 +18,8 @@ android {
         applicationId 'dev.muuko.honorfreeclip2'
         minSdk 29
         targetSdk 34
-        versionCode 21
-        versionName '1.1.0-beta.2'
+        versionCode 22
+        versionName '1.1.0-beta.3'
     }
 
     signingConfigs {
@@ -34,6 +34,13 @@ android {
     }
 
     buildTypes {
+        verification {
+            // Reproducible release-like validation without creating or reading a signing key.
+            initWith release
+            signingConfig null
+            debuggable false
+            matchingFallbacks = ['release']
+        }
         release {
             minifyEnabled false
             if (canSignRelease) {
@@ -45,6 +52,8 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+    buildFeatures { buildConfig true }
+    testOptions { unitTests.includeAndroidResources = true }
 }
 
 // Prevent accidental publication of an unsigned release APK.
@@ -57,4 +66,6 @@ gradle.taskGraph.whenReady { graph ->
 dependencies {
     // Framework implementation is supplied by LSPosed at runtime.
     compileOnly 'io.github.libxposed:api:101.0.1'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.14.1'
 }

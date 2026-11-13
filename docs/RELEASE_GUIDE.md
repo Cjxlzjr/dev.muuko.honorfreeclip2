@@ -1,52 +1,64 @@
-# v1.1.0-beta.2 发布与签名指南
+# v1.1.0-beta.3 发布与签名
 
-## 版本约定
+## 当前版本
 
-- `applicationId`: `dev.muuko.honorfreeclip2`（不修改；Android 更新依赖它）
-- `versionCode`: `21`
-- `versionName`: `1.1.0-beta.2`
-- 推荐 Release 标签：`21-1.1.0-beta.2`
-- 发布文件名：`HonorFreeClip2-v1.1.0-beta.2-release.apk`
+| 项目 | 值 |
+|---|---|
+| applicationId | dev.muuko.honorfreeclip2 |
+| versionCode | 22 |
+| versionName | 1.1.0-beta.3 |
+| 新标签 | v1.1.0-beta.3 |
+| 已有 beta.2 标签 | 21-1.1.0-beta.2（保留） |
 
-## GitHub Actions
+版本的唯一构建来源为 `app/build.gradle`；脚本通过 `scripts/release_metadata.py` 读取。
+本次补丁修改了运行时代码并且 beta.2 已存在，因此递增版本和 versionCode。
 
-1. 上传**完整**源码，确保 `.github/workflows/build-apk.yml` 在 push/PR 上先运行 JVM/静态检查并构建 Debug APK。
-2. 在仓库 `Settings → Secrets and variables → Actions` 新增四个 Repository secrets：
-   - `HF2_KEYSTORE_BASE64`: 固定 JKS 文件的 base64 文本，不包含换行。
-   - `HF2_KEYSTORE_PASSWORD`: JKS 存储密码。
-   - `HF2_KEY_ALIAS`: 私钥 alias。
-   - `HF2_KEY_PASSWORD`: 私钥密码。
-3. `Signed Beta Release` Workflow 可通过 `workflow_dispatch` 手动运行。该工作流只生成签名构建产物，不自动创建 Release。先完成真机验收并核对产物，再手动创建标签 `21-1.1.0-beta.2` 和 Pre-release。
-4. 工作流验证 APK 签名、生成 SHA256、上传签名 APK；私钥不会加入 artifact 和源码 ZIP。
-
-**重要：** 不要在 issue、README、构建日志或 ZIP 中上传 JKS 和密码。请离线安全备份私钥。如果更换签名，已安装旧版不能直接覆盖更新。
-
-## 本地签名构建（Linux/macOS）
-
-需要 Android SDK 35、Build Tools 35.0.0、JDK 17 和 Gradle 8.11.1：
+## 不使用签名密钥的准备
 
 ```sh
-export HF2_KEYSTORE_PATH="$HOME/keys/hf2-release.jks"
-export HF2_KEYSTORE_PASSWORD='你的存储密码'
-export HF2_KEY_ALIAS='hf2'
-export HF2_KEY_PASSWORD='你的私钥密码'
+bash tests/run_host_tests.sh
+gradle :app:assembleVerification :app:testVerificationUnitTest :app:lintVerification --no-daemon
+# 提交已审查源码后：
+bash scripts/prepare_dist.sh verification
+```
+
+得到未签名 APK、与提交一致的完整源码 ZIP、许可文件和 SHA256。
+未签名验证包不能直接安装。不要把该包改名为 signed/release 后上传。
+`git archive` 只包含当前提交；打包脚本拒绝未提交的源码变更。
+
+## 固定签名
+
+继续使用公开 beta.2 对应的原 JKS。已核验的公开证书 SHA-256：
+
+```text
+aa55a9ddd7e11aef30dc4c07d595a2f165cfbbbcff1affa3109c946794d64874
+```
+
+它是公开证书指纹，不是私钥。不要生成新发布密钥覆盖它。
+私钥和密码由维护者保管，不放入源码、issue、对话或构建产物。
+本地准备 `HF2_KEYSTORE_PATH`、`HF2_KEYSTORE_PASSWORD`、`HF2_KEY_ALIAS`、
+`HF2_KEY_PASSWORD` 四个环境变量后运行：
+
+```sh
 bash scripts/build_release_local.sh
 ```
 
-产物位于 `dist/`；执行 `apksigner verify` 并生成 SHA-256。未准备固定密钥和最终真机测试结果时先不要发布。
+脚本运行测试、构建 Release、核对包名/版本/非调试配置和旧证书，随后打包。
+缺少签名变量的 `assembleRelease` 仍会被拒绝；`assembleVerification` 独立可用。
 
-## 构建与验收顺序
+## GitHub Actions 与草稿预发布
 
-1. `python3 tests/check_release.py`：检查 15 对新图标、版本、作用域、文案和签名配置。
-2. `bash tests/run_host_tests.sh`：检查协议逻辑与模拟传输。
-3. Android Debug APK 构建 / 设备安装冒烟测试。
-4. `FINAL_TEST_PLAN.md` 所列真机回归并填写实测结论。
-5. 使用固定签名生成 Release APK 并验证 SHA256。
-6. 上传 `LICENSE`、源码 ZIP、APK、Release Notes；将标签标为 **Pre-release**。
+1. 审查 PR 并确认本次源代码、自动化测试结果和真机待验项，再合入 main。
+2. 在 GitHub 配置 `release-signing` Environment，添加维护者审批保护。签名 secrets 可以
+   放在该 Environment，或继续使用已有同名 Repository secrets：
+   `HF2_KEYSTORE_BASE64`、`HF2_KEYSTORE_PASSWORD`、`HF2_KEY_ALIAS`、`HF2_KEY_PASSWORD`。
+   不需要把原有密钥复制给自动开发助手。
+3. 维护者确认使用原签名后，手动运行 Signed Beta Release，勾选 `confirm_signing`。
+   工作流仅接受 main；先测试，再读取密钥；退出时清理临时密钥。
+4. 默认创建 **Draft + Pre-release**，附签名 APK、完整源码 ZIP、许可/来源及 SHA256。
+   不存在 push/tag 自动发布，也不会改动旧 beta.2。
+5. 检查签名/附件并填写 `FINAL_TEST_PLAN.md`。维护者另行确认正式公开后，
+   在 GitHub 将草稿发布，保留 Pre-release 勾选。
 
-## GitHub Release 最低要求
-
-- Release APK 已签名，开发者可以证明签名证书保持不变。
-- 有源代码、GPL-3.0 许可和上游署名；不包含旧厂商图标。
-- 已列清设备、MagicOS、耳机固件、LSPosed 版本及所有未验证项目。
-- 首发 Release 使用 Pre-release。对其他机型/固件不承诺兼容。
+CI 中的 Actions 固定到完整提交 SHA，使用最小权限。普通 CI 不读取签名 secrets。
+未通过真机的跨版本 Hook、真实蓝牙恢复及三槽位操作在 Release Notes 中保持待验证。

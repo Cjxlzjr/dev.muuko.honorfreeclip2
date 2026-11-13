@@ -1,93 +1,85 @@
 package dev.muuko.honorfreeclip2;
 
 import android.app.Activity;
-import android.util.Log;
+import android.view.View;
 import java.lang.reflect.Method;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.WeakHashMap;
 import io.github.libxposed.api.XposedModule;
 import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam;
 
-/**
- * Modern LSPosed API 101 entry point. No hooks in Bluetooth process or system_server.
- * All hooks use "after original", never replace an original method or a return value.
- */
+/** After-original lifecycle hooks, confined to the audio manager process and verified pages. */
 public final class HonorFreeClip2Module extends XposedModule {
+    private static final String HOST_PACKAGE = "com.hihonor.audioaccessorymanager";
+    private static final String HOME = "com.hihonor.earphone.homepage.EarphoneDetailsActivity";
+    private static final String FUNCTION = "com.hihonor.earphone.functioncontrol.FunctionControlActivity";
+    private final Set<Method> installed = new HashSet<>();
+    private final WeakHashMap<Activity, Boolean> pending = new WeakHashMap<>();
 
-    @Override
-    public void onPackageLoaded(PackageLoadedParam param) {
-        if (!param.isFirstPackage()) return;
-        String pkg = param.getPackageName();
-        if ("com.hihonor.audioaccessorymanager".equals(pkg)) {
-            installAudioAccessoryHook(param.getDefaultClassLoader());
+    @Override public void onPackageLoaded(PackageLoadedParam param) {
+        if (!param.isFirstPackage() || !HOST_PACKAGE.equals(param.getPackageName())) return;
+        for (String name : new String[]{HOME, FUNCTION}) {
+            try {
+                Class<?> host = Class.forName(name, false, param.getDefaultClassLoader());
+                for (Method method : LifecycleHookResolver.resumeMethods(host, Activity.class)) install(method);
+            } catch (Throwable error) {
+                CompatibilityDiagnostics.event("hook", name + " unavailable=" + error.getClass().getSimpleName());
+            }
         }
+        // Stable fallback also covers renamed vendor classes; runtime checks are mandatory.
+        for (Method method : LifecycleHookResolver.resumeMethods(Activity.class, Activity.class)) install(method);
     }
 
-    private void installAudioAccessoryHook(ClassLoader loader) {
-        installHomePageHook(loader);
-        installFunctionControlHook(loader);
-    }
-
-    private void installFunctionControlHook(ClassLoader loader) {
+    private void install(Method method) {
+        if (installed.contains(method)) return;
         try {
-            Class<?> host = Class.forName(
-                    "com.hihonor.earphone.functioncontrol.FunctionControlActivity", false, loader);
-            Method init = host.getDeclaredMethod("c0");
-            init.setAccessible(true);
-            hook(init).intercept(chain -> {
-                Object result = chain.proceed();
+            method.setAccessible(true);
+            hook(method).intercept(chain -> {
+                Object result = chain.proceed(); // Preserve the host result and its exceptions exactly.
                 try {
-                    if (chain.getThisObject() instanceof Activity) {
-                        Activity activity = (Activity) chain.getThisObject();
-                        activity.runOnUiThread(() -> {
-                            try {
-                                FunctionControlInjector.inject(activity);
-                            } catch (Throwable err) {
-                                log(Log.ERROR, ModuleConstants.TAG,
-                                        "FunctionControlInjector failed", err);
-                            }
-                        });
-                    }
-                } catch (Throwable err) {
-                    log(Log.ERROR, ModuleConstants.TAG, "FunctionControl hook failed", err);
+                    if (chain.getThisObject() instanceof Activity) schedule((Activity) chain.getThisObject());
+                } catch (Throwable error) {
+                    CompatibilityDiagnostics.event("hook_callback", error.getClass().getSimpleName());
                 }
                 return result;
             });
-            log(Log.INFO, ModuleConstants.TAG, "FunctionControlActivity.c0 hook registered");
-        } catch (Throwable t) {
-            log(Log.ERROR, ModuleConstants.TAG, "FunctionControl hook registration failed", t);
+            installed.add(method);
+            CompatibilityDiagnostics.event("hook", method.getDeclaringClass().getName()
+                    + "." + method.getName() + " installed");
+        } catch (Throwable error) {
+            CompatibilityDiagnostics.event("hook", method.getName() + " rejected=" + error.getClass().getSimpleName());
         }
     }
 
-    /** Home page shown in the screenshot; runs after the vendor's onResume. */
-    private void installHomePageHook(ClassLoader loader) {
-        try {
-            Class<?> host = Class.forName(
-                    "com.hihonor.earphone.homepage.EarphoneDetailsActivity", false, loader);
-            Method resume = host.getDeclaredMethod("onResume");
-            resume.setAccessible(true);
-            hook(resume).intercept(chain -> {
-                Object result = chain.proceed();
-                try {
-                    if (chain.getThisObject() instanceof Activity) {
-                        Activity activity = (Activity) chain.getThisObject();
-                        activity.runOnUiThread(() -> {
-                            try {
-                                EarphoneDetailsInjector.inject(activity);
-                            } catch (Throwable err) {
-                                log(Log.ERROR, ModuleConstants.TAG,
-                                        "EarphoneDetailsInjector failed", err);
-                            }
-                        });
-                    }
-                } catch (Throwable err) {
-                    log(Log.ERROR, ModuleConstants.TAG, "EarphoneDetails hook failed", err);
+    private void schedule(Activity activity) {
+        if (!HOST_PACKAGE.equals(activity.getPackageName()) || activity.isFinishing() || activity.isDestroyed()) return;
+        View decor = activity.getWindow().getDecorView();
+        synchronized (pending) {
+            if (pending.containsKey(activity)) return;
+            pending.put(activity, Boolean.TRUE);
+        }
+        if (!decor.post(() -> {
+            synchronized (pending) { pending.remove(activity); }
+            try {
+                if (activity.isFinishing() || activity.isDestroyed()) return;
+                CompatibilityDiagnostics.environment(activity);
+                String name = activity.getClass().getName();
+                boolean home = HOME.equals(name) || HomeLayoutResolver.findUniqueScroll(activity) != null;
+                boolean function = FUNCTION.equals(name) || FunctionControlInjector.hasLayoutAnchor(activity);
+                if (!home && !function) {
+                    CompatibilityDiagnostics.event("layout", name + " no_anchor skipped");
+                    return;
                 }
-                return result;
-            });
-            log(Log.INFO, ModuleConstants.TAG,
-                    "EarphoneDetailsActivity.onResume hook registered");
-        } catch (Throwable t) {
-            log(Log.ERROR, ModuleConstants.TAG,
-                    "EarphoneDetailsActivity hook registration failed", t);
+                if (home && function) {
+                    CompatibilityDiagnostics.event("layout", "ambiguous_page skipped");
+                } else if (home) EarphoneDetailsInjector.inject(activity);
+                else FunctionControlInjector.inject(activity);
+            } catch (Throwable error) {
+                CompatibilityDiagnostics.event("injection", "skipped=" + error.getClass().getSimpleName());
+            }
+        })) {
+            synchronized (pending) { pending.remove(activity); }
         }
     }
 }

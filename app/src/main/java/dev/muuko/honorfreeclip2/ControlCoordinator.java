@@ -38,6 +38,7 @@ final class ControlCoordinator {
     private EqualizerState undoBackup;
     private EqualizerState undoExpected;
     private boolean busy = false;
+    private volatile boolean active = true;
     private boolean hasRead = false;
     private long lastRefresh = 0;
     private long lastAutoAttempt = 0;
@@ -160,6 +161,7 @@ final class ControlCoordinator {
 
     /** Do not apply an in-flight result to a page that is no longer visible. */
     void onPaused() {
+        active = false;
         // Release the short-lived vendor RFCOMM channel when leaving the host page.
         FreeClipTransport.onPagePaused();
         if (busy) {
@@ -177,7 +179,15 @@ final class ControlCoordinator {
             status("同步已暂停 · 返回页面后自动刷新");
             updateAll();
         }
+        // ACL events are not observed while paused. Require a new read before editing.
+        hasRead = false;
+        lastRefresh = 0;
+        lastAutoAttempt = 0;
+        previewOnly = !known.isEmpty();
+        updateAll();
     }
+
+    void onResumed() { active = true; }
 
     void onReconnected() {
         lastAutoAttempt = 0;
@@ -242,7 +252,7 @@ final class ControlCoordinator {
             changeSoundPreset(desired);
             return;
         }
-        if (busy || previewOnly || device == null || !item.accepts(desired) || !known.containsKey(item)) return;
+        if (busy || previewOnly || device == null || !alive() || !item.accepts(desired) || !known.containsKey(item)) return;
         final Integer before = known.get(item);
         if (before != null && before == desired) return;
         invalidateCache();
@@ -254,7 +264,7 @@ final class ControlCoordinator {
             if (!alive() || currentRevision != revision) return;
             busy = false;
             if (actual != null) known.put(item, actual);
-            else if (before != null) known.put(item, before);
+            else known.remove(item); // A failed transaction leaves the actual device value unknown.
             if (verified) {
                 cacheVerifiedState();
                 status("「" + item.title + "」已通过耳机状态回读确认");
@@ -342,7 +352,7 @@ final class ControlCoordinator {
                     if (!alive() || requestRevision!=revision) return;
                     busy=false;
                     // A changed state is displayed only if the device actually reported it.
-                    if (observed!=null) { aiState=observed; updateAi(); }
+                    aiState=observed; updateAi();
                     status(confirmed ? "AI 键已保存，左右状态回读一致" : "AI 键写入未确认："+error);
                     updateAll();
                     observer.done(confirmed, confirmed ? "已从耳机回读目标动作" : error);
@@ -504,7 +514,7 @@ final class ControlCoordinator {
         Row row = rows.get(item);
         if (row == null) return;
         Integer state = known.get(item);
-        boolean enabled = item.supported && device != null && state != null && !busy && !previewOnly;
+        boolean enabled = item.supported && device != null && state != null && !busy && !previewOnly && active;
         if (item == FreeClipSetting.SOUND_EFFECT)
             enabled = enabled && !SoundPresetCatalog.writableOptions(eqState).isEmpty();
         try { row.update(state, enabled, busy); }
@@ -513,7 +523,7 @@ final class ControlCoordinator {
 
     private boolean alive() {
         Activity activity = owner.get();
-        return activity != null && !activity.isFinishing() && !activity.isDestroyed();
+        return active && activity != null && !activity.isFinishing() && !activity.isDestroyed();
     }
 
     private void status(String text) {

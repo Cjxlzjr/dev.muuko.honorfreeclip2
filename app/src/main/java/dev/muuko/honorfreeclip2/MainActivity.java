@@ -10,7 +10,7 @@ public final class MainActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         LinearLayout root = UiKit.createPage(this, "HonorFreeClip2",
-                "V1.1.0 Beta 1 · 自定义 EQ 三槽位管理");
+                "V" + BuildConfig.VERSION_NAME + " · 自定义 EQ 三槽位管理");
         UiKit.addSection(this, root, "运行方式",
                 "LSPosed 仅选择 com.hihonor.audioaccessorymanager。"
                 + " 不需要安装、启动或 Hook 华为智慧音频。");

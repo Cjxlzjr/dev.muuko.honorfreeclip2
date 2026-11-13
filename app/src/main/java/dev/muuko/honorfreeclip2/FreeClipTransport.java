@@ -2,7 +2,6 @@ package dev.muuko.honorfreeclip2;
 
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
-import android.os.ParcelUuid;
 import android.util.Log;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -13,11 +12,13 @@ import java.util.EnumMap;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.function.BooleanSupplier;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Single-worker, short-lived RFCOMM/SPP transactions. No hooks in Bluetooth or system_server.
@@ -32,8 +33,10 @@ final class FreeClipTransport {
     interface ProgressCallback { void done(Map<FreeClipSetting, Integer> values, EqualizerState eq, String stage); }
 
     private static final UUID SPP = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
-    private static final ExecutorService IO = Executors.newSingleThreadExecutor(r -> {
-        Thread thread = new Thread(r, "HonorFreeClip2-rfcomm");
+    private static final TransportTaskRunner IO = new TransportTaskRunner(20_000, 16);
+    private static final ThreadPoolExecutor CONNECTOR = new ThreadPoolExecutor(1, 1,
+            0, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(1), r -> {
+        Thread thread = new Thread(r, "HonorFreeClip2-connect");
         thread.setDaemon(true);
         return thread;
     });
@@ -67,9 +70,24 @@ final class FreeClipTransport {
     }
 
     /** Fast staged read. AI key is intentionally lazy: querying only when its sheet opens avoids slowing the homepage. */
-    static void read(BluetoothDevice device, ProgressCallback progress, ReadCallback callback) {
+    static void read(BluetoothDevice device, ProgressCallback progressListener, ReadCallback listener) {
+        final AtomicBoolean delivered = new AtomicBoolean();
+        final ReadCallback callback = (states, eq, ai, error) -> {
+            if (delivered.compareAndSet(false, true)) {
+                try { listener.done(states, eq, ai, error); }
+                catch (Throwable errorInCallback) {
+                    Log.w(ModuleConstants.TAG, "Transport callback failed: " + errorInCallback.getClass().getSimpleName());
+                }
+            }
+        };
+        final ProgressCallback progress = (values, eq, stage) -> {
+            if (!delivered.get() && progressListener != null) {
+                try { progressListener.done(values, eq, stage); }
+                catch (Throwable ignored) { }
+            }
+        };
         final long requestEpoch = currentEpoch();
-        IO.execute(() -> {
+        submit(() -> {
             if (requestEpoch != currentEpoch()) {
                 callback.done(new EnumMap<>(FreeClipSetting.class), null, null, "页面已退出，取消过期同步");
                 return;
@@ -136,17 +154,26 @@ final class FreeClipTransport {
                 Log.w(ModuleConstants.TAG, "RFCOMM read failed: " + t.getClass().getSimpleName());
                 callback.done(new EnumMap<>(FreeClipSetting.class), null, null, message(t));
             } finally { release(socket, healthy); }
-        });
+        }, () -> callback.done(new EnumMap<>(FreeClipSetting.class), null, null, BUSY_ERROR), requestEpoch);
     }
 
-    static void write(BluetoothDevice device, FreeClipSetting key, int desired, WriteCallback callback) {
+    static void write(BluetoothDevice device, FreeClipSetting key, int desired, WriteCallback listener) {
+        final AtomicBoolean delivered = new AtomicBoolean();
+        final WriteCallback callback = (verified, actual, error) -> {
+            if (delivered.compareAndSet(false, true)) {
+                try { listener.done(verified, actual, error); }
+                catch (Throwable errorInCallback) {
+                    Log.w(ModuleConstants.TAG, "Transport callback failed: " + errorInCallback.getClass().getSimpleName());
+                }
+            }
+        };
         final long requestEpoch = currentEpoch();
-        IO.execute(() -> {
+        submit(() -> {
             if (requestEpoch != currentEpoch()) {
                 callback.done(false, null, "页面已退出，取消过期修改");
                 return;
             }
-            if (device == null || !key.accepts(desired)) {
+            if (device == null || key == null || !key.accepts(desired)) {
                 callback.done(false, null, "无效设备或操作"); return;
             }
             byte[] packet = FreeClipProtocol.writePacket(key, desired);
@@ -160,6 +187,17 @@ final class FreeClipTransport {
             try {
                 socket = acquire(device);
                 long connectedAt = android.os.SystemClock.elapsedRealtime();
+                Integer before = FreeClipProtocol.decode(
+                        exchangeReadSetting(socket, query, READ_WINDOW, key)).get(key);
+                if (before == null) {
+                    callback.done(false, null, "未回读该设置的有效状态，未发送写入");
+                    return;
+                }
+                if (before == desired) {
+                    healthy = true;
+                    callback.done(true, before, null);
+                    return;
+                }
                 // We do not need a 300 ms ACK read. Send once, allow a bounded
                 // processing gap, then only accept a CRC-valid report for this key.
                 if (requestEpoch != currentEpoch()) {
@@ -184,7 +222,7 @@ final class FreeClipTransport {
                 Log.w(ModuleConstants.TAG, "RFCOMM write failed for " + key + ": " + t.getClass().getSimpleName());
                 callback.done(false, null, message(t));
             } finally { release(socket, healthy); }
-        });
+        }, () -> callback.done(false, null, BUSY_ERROR), requestEpoch);
     }
 
     interface PresetWriteCallback { void done(boolean verified, EqualizerState observed, String error); }
@@ -195,9 +233,18 @@ final class FreeClipTransport {
      */
     static void writeSoundPreset(BluetoothDevice device, EqualizerState snapshot,
                                  int desired, BooleanSupplier stillAllowed,
-                                 PresetWriteCallback callback) {
+                                 PresetWriteCallback listener) {
+        final AtomicBoolean delivered = new AtomicBoolean();
+        final PresetWriteCallback callback = (verified, observed, error) -> {
+            if (delivered.compareAndSet(false, true)) {
+                try { listener.done(verified, observed, error); }
+                catch (Throwable errorInCallback) {
+                    Log.w(ModuleConstants.TAG, "Transport callback failed: " + errorInCallback.getClass().getSimpleName());
+                }
+            }
+        };
         final long requestEpoch = currentEpoch();
-        IO.execute(() -> {
+        submit(() -> {
             if (requestEpoch != currentEpoch()) {
                 callback.done(false, null, "页面已退出，取消预设切换");
                 return;
@@ -236,15 +283,24 @@ final class FreeClipTransport {
                 Log.w(ModuleConstants.TAG, "Sound preset switch failed",e);
                 callback.done(false, null, message(e));
             } finally { release(socket, healthy); }
-        });
+        }, () -> callback.done(false, null, BUSY_ERROR), requestEpoch);
     }
 
     interface AiProbeCallback { void done(String result, AiKeyProbeCodec.State state); }
 
     /** One-shot, read-only candidate long-press query. Never sends action writes. */
-    static void probeAiKey(BluetoothDevice device, AiProbeCallback callback) {
+    static void probeAiKey(BluetoothDevice device, AiProbeCallback listener) {
+        final AtomicBoolean delivered = new AtomicBoolean();
+        final AiProbeCallback callback = (report, state) -> {
+            if (delivered.compareAndSet(false, true)) {
+                try { listener.done(report, state); }
+                catch (Throwable errorInCallback) {
+                    Log.w(ModuleConstants.TAG, "Transport callback failed: " + errorInCallback.getClass().getSimpleName());
+                }
+            }
+        };
         final long requestEpoch = currentEpoch();
-        IO.execute(() -> {
+        submit(() -> {
             if (requestEpoch != currentEpoch()) {
                 callback.done("页面已退出，取消只读探测",null);return;
             }
@@ -259,7 +315,7 @@ final class FreeClipTransport {
             } catch (Throwable t) {
                 callback.done("只读探测失败："+message(t),null);
             } finally {release(socket, healthy);}
-        });
+        }, () -> callback.done(BUSY_ERROR, null), requestEpoch);
     }
 
     interface AiWriteCallback { void done(boolean confirmed,AiKeyProbeCodec.State observed,String error); }
@@ -270,9 +326,18 @@ final class FreeClipTransport {
      * The 2B/17 preflight and post-write checks are both mandatory.
      */
     static void writeAiKey(BluetoothDevice device,AiKeyProbeCodec.State snapshot,
-                           int side,int desired,BooleanSupplier stillAllowed,AiWriteCallback callback) {
+                           int side,int desired,BooleanSupplier stillAllowed,AiWriteCallback listener) {
+        final AtomicBoolean delivered = new AtomicBoolean();
+        final AiWriteCallback callback = (confirmed, observed, error) -> {
+            if (delivered.compareAndSet(false, true)) {
+                try { listener.done(confirmed, observed, error); }
+                catch (Throwable errorInCallback) {
+                    Log.w(ModuleConstants.TAG, "Transport callback failed: " + errorInCallback.getClass().getSimpleName());
+                }
+            }
+        };
         final long requestEpoch=currentEpoch();
-        IO.execute(() -> {
+        submit(() -> {
             if (requestEpoch!=currentEpoch() || device==null ||
                     !AiKeyActionCodec.readable(snapshot) ||
                     !AiKeyActionCodec.sideAllowed(side) ||
@@ -312,7 +377,7 @@ final class FreeClipTransport {
                 Log.w(ModuleConstants.TAG,"AI key write failed",t);
                 callback.done(false,null,message(t));
             } finally {release(socket,healthy);}
-        });
+        }, () -> callback.done(false, null, BUSY_ERROR), requestEpoch);
     }
 
     interface EqWriteCallback { void done(boolean verified, EqualizerState observed, String error); }
@@ -320,10 +385,19 @@ final class FreeClipTransport {
     /** One-shot independent write, preflight re-read, exact post-write CRC-verified readback. */
     static void writeEqualizer(BluetoothDevice device, EqualizerState snapshot,
                                int id, String name, int[] requested,
-                               BooleanSupplier stillAllowed, EqWriteCallback callback) {
+                               BooleanSupplier stillAllowed, EqWriteCallback listener) {
+        final AtomicBoolean delivered = new AtomicBoolean();
+        final EqWriteCallback callback = (verified, observed, error) -> {
+            if (delivered.compareAndSet(false, true)) {
+                try { listener.done(verified, observed, error); }
+                catch (Throwable errorInCallback) {
+                    Log.w(ModuleConstants.TAG, "Transport callback failed: " + errorInCallback.getClass().getSimpleName());
+                }
+            }
+        };
         final int[] gains = requested == null ? null : requested.clone();
         final long requestEpoch = currentEpoch();
-        IO.execute(() -> {
+        submit(() -> {
             if (requestEpoch != currentEpoch()) {
                 callback.done(false, null, "页面已退出，取消 EQ 写入");
                 return;
@@ -367,7 +441,7 @@ final class FreeClipTransport {
                 Log.w(ModuleConstants.TAG, "Independent EQ write failed", failure);
                 callback.done(false, null, message(failure));
             } finally { release(socket, healthy); }
-        });
+        }, () -> callback.done(false, null, BUSY_ERROR), requestEpoch);
     }
 
     /**
@@ -379,10 +453,19 @@ final class FreeClipTransport {
      */
     static void createCustomPreset(BluetoothDevice device, EqualizerState snapshot,
                                    int id, String name, int[] requested,
-                                   BooleanSupplier stillAllowed, EqWriteCallback callback) {
+                                   BooleanSupplier stillAllowed, EqWriteCallback listener) {
+        final AtomicBoolean delivered = new AtomicBoolean();
+        final EqWriteCallback callback = (verified, observed, error) -> {
+            if (delivered.compareAndSet(false, true)) {
+                try { listener.done(verified, observed, error); }
+                catch (Throwable errorInCallback) {
+                    Log.w(ModuleConstants.TAG, "Transport callback failed: " + errorInCallback.getClass().getSimpleName());
+                }
+            }
+        };
         final int[] gains = requested == null ? null : requested.clone();
         final long epoch = currentEpoch();
-        IO.execute(() -> {
+        submit(() -> {
             if (device == null || epoch != currentEpoch() || !stillAllowed.getAsBoolean()
                     || !CustomPresetPolicy.createAllowed(snapshot, id, name, gains)) {
                 callback.done(false, null, "槽位已占用、预设列表未读取或请求过期；未发送创建命令"); return;
@@ -421,13 +504,22 @@ final class FreeClipTransport {
                 Log.w(ModuleConstants.TAG,"Create EQ preset failed",e);
                 callback.done(false,null,message(e));
             } finally{release(socket,healthy);}
-        });
+        }, () -> callback.done(false, null, BUSY_ERROR), epoch);
     }
 
     static void selectCustomPreset(BluetoothDevice device,EqualizerState snapshot,int id,
-                                   BooleanSupplier stillAllowed,EqWriteCallback callback) {
+                                   BooleanSupplier stillAllowed,EqWriteCallback listener) {
+        final AtomicBoolean delivered = new AtomicBoolean();
+        final EqWriteCallback callback = (verified, observed, error) -> {
+            if (delivered.compareAndSet(false, true)) {
+                try { listener.done(verified, observed, error); }
+                catch (Throwable errorInCallback) {
+                    Log.w(ModuleConstants.TAG, "Transport callback failed: " + errorInCallback.getClass().getSimpleName());
+                }
+            }
+        };
         final long epoch=currentEpoch();
-        IO.execute(() -> {
+        submit(() -> {
             if(device==null||epoch!=currentEpoch()||!stillAllowed.getAsBoolean()
                     ||!CustomPresetPolicy.switchAllowed(snapshot,id)){
                 callback.done(false,null,"目标预设不存在或状态尚未同步，未发送命令");return;
@@ -469,13 +561,22 @@ final class FreeClipTransport {
                 Log.w(ModuleConstants.TAG,"Select custom EQ preset failed",e);
                 callback.done(false,null,message(e));
             } finally{release(socket,healthy);}
-        });
+        }, () -> callback.done(false, null, BUSY_ERROR), epoch);
     }
 
     static void deleteCustomPreset(BluetoothDevice device,EqualizerState snapshot,int id,
-                                   BooleanSupplier stillAllowed,EqWriteCallback callback) {
+                                   BooleanSupplier stillAllowed,EqWriteCallback listener) {
+        final AtomicBoolean delivered = new AtomicBoolean();
+        final EqWriteCallback callback = (verified, observed, error) -> {
+            if (delivered.compareAndSet(false, true)) {
+                try { listener.done(verified, observed, error); }
+                catch (Throwable errorInCallback) {
+                    Log.w(ModuleConstants.TAG, "Transport callback failed: " + errorInCallback.getClass().getSimpleName());
+                }
+            }
+        };
         final long epoch=currentEpoch();
-        IO.execute(() -> {
+        submit(() -> {
             if(device==null||epoch!=currentEpoch()||!stillAllowed.getAsBoolean()
                     ||!CustomPresetPolicy.deleteAllowed(snapshot,id)){
                 callback.done(false,null,"当前选中槽位或预设列表未知，禁止删除");return;
@@ -515,7 +616,7 @@ final class FreeClipTransport {
                 Log.w(ModuleConstants.TAG,"Delete custom EQ preset failed",e);
                 callback.done(false,null,message(e));
             } finally{release(socket,healthy);}
-        });
+        }, () -> callback.done(false, null, BUSY_ERROR), epoch);
     }
 
     private static String message(Throwable t) {
@@ -525,6 +626,20 @@ final class FreeClipTransport {
                 && t.getMessage().contains("过期建链")) return "页面切换后取消过期蓝牙请求";
         if (t instanceof IOException) return "蓝牙控制通道不可用（可能被其他程序占用）";
         return "耳机通信失败：" + t.getClass().getSimpleName();
+    }
+
+    private static final String BUSY_ERROR = "耳机请求超时或队列繁忙；请重新同步";
+
+    private static void submit(Runnable work, Runnable failed, long epoch) {
+        IO.execute(work, failed, () -> {
+            synchronized (POOL_LOCK) {
+                if (poolEpoch == epoch) {
+                    poolEpoch++;
+                    closeAfterRelease = true;
+                    clearPoolLocked();
+                }
+            }
+        });
     }
 
     private static long currentEpoch() {
@@ -623,50 +738,22 @@ final class FreeClipTransport {
                         ? device.createRfcommSocketToServiceRecord(SPP)
                         : device.createInsecureRfcommSocketToServiceRecord(SPP);
                 if (tryConnect(socket)) return socket;
+            } catch (SecurityException denied) {
+                close(socket);
+                throw denied; // Permission revocation is not a reason to retry another socket.
             } catch (Exception e) { lastError = e; }
             close(socket);
-        }
-        // An optional SDP fallback for devices advertising vendor control UUIDs.
-        ParcelUuid[] uuids = null;
-        try { uuids = device.getUuids(); } catch (Throwable ignored) { }
-        if (uuids != null) {
-            int candidates = 0;
-            for (ParcelUuid parcel : uuids) {
-                if (parcel == null || SPP.equals(parcel.getUuid()) || !isControlCandidate(parcel.getUuid())) continue;
-                if (++candidates > 2) break; // bounded work, no 1..8 blind channel probing
-                BluetoothSocket socket = null;
-                try {
-                    socket = device.createRfcommSocketToServiceRecord(parcel.getUuid());
-                    if (tryConnect(socket)) return socket;
-                } catch (Exception e) { lastError = e; }
-                close(socket);
-            }
         }
         throw lastError == null ? new IOException("SPP connection failed") : lastError;
     }
 
-    /** Exclude classic HFP/A2DP/AVRCP UUIDs, which must never receive vendor control frames. */
-    private static boolean isControlCandidate(UUID uuid) {
-        String value = uuid.toString().toLowerCase(java.util.Locale.ROOT);
-        if (!value.startsWith("0000") || !value.endsWith("-0000-1000-8000-00805f9b34fb")) return true;
-        int id;
-        try { id = Integer.parseInt(value.substring(4, 8), 16); } catch (Exception e) { return false; }
-        switch (id) {
-            case 0x1108: case 0x110A: case 0x110B: case 0x110C: case 0x110D:
-            case 0x110E: case 0x110F: case 0x1112: case 0x111E: case 0x111F: return false;
-            default: return true;
-        }
-    }
-
     private static boolean tryConnect(BluetoothSocket socket) throws Exception {
-        ExecutorService connectExecutor = Executors.newSingleThreadExecutor(r -> {
-            Thread thread = new Thread(r, "HonorFreeClip2-connect");
-            thread.setDaemon(true);
-            return thread;
-        });
         try {
-            Future<Boolean> job = connectExecutor.submit(new Callable<Boolean>() {
-                @Override public Boolean call() throws Exception { socket.connect(); return true; }
+            Future<Boolean> job = CONNECTOR.submit(new Callable<Boolean>() {
+                @Override public Boolean call() throws Exception {
+                    try { socket.connect(); return true; }
+                    catch (SecurityException denied) { throw denied; }
+                }
             });
             try { return job.get(CONNECT_TIMEOUT, TimeUnit.MILLISECONDS); }
             catch (java.util.concurrent.TimeoutException timedOut) {
@@ -678,7 +765,7 @@ final class FreeClipTransport {
                 if (cause instanceof Exception) throw (Exception) cause;
                 throw new IOException("socket connect failed", cause);
             }
-        } finally { connectExecutor.shutdownNow(); }
+        } finally { CONNECTOR.purge(); }
     }
 
     private static byte[] exchangeRead(BluetoothSocket socket, byte[] query, long maxWindowMs) throws Exception {
@@ -721,9 +808,9 @@ final class FreeClipTransport {
             int available = in.available();
             if (available > 0) {
                 int count = in.read(temp, 0, Math.min(temp.length, available));
-                if (count < 0) break;
+                if (count < 0) throw new IOException("Control channel closed");
                 received.write(temp, 0, count);
-                if (received.size() > 64 * 1024) break;
+                if (received.size() > 64 * 1024) throw new IOException("Control reply too large");
                 lastRx = android.os.SystemClock.elapsedRealtime();
             } else {
                 long now = android.os.SystemClock.elapsedRealtime();
@@ -748,6 +835,6 @@ final class FreeClipTransport {
     }
 
     private static void close(BluetoothSocket socket) {
-        if (socket != null) try { socket.close(); } catch (IOException ignored) { }
+        if (socket != null) try { socket.close(); } catch (Exception ignored) { }
     }
 }

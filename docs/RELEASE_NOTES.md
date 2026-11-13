@@ -1,27 +1,31 @@
-# HonorFreeClip2 v1.1.0-beta.2 — 发布说明（草稿）
+# HonorFreeClip2 v1.1.0-beta.3
 
-这是面向荣耀 Magic8 Pro 与华为 FreeClip 2 的非官方 LSPosed 增强控制模块 Beta 版。
+在 beta.2 基础上完成兼容性和稳定性修补，保留现有 UI、图标和已验证控制。
 
-**本次 Beta.2 修正**
-- AI 键设置页面移除了调试说明、原始字节结果、探测对比和复制功能；仅保留用户设置和刷新入口。
-- 保持原有独立蓝牙读写、状态复核与写入结果确认；错误时清除过时的 AI 键状态，避免按旧值操作。
+- 移除 `FunctionControlActivity.c0()` 单点依赖，解析生命周期继承关系并添加安全布局降级。
+- 新增仅写本机日志的系统、原厂 APK 版本、Hook 和布局诊断。
+- 普通设置写前回读，未知状态保持只读；限制 SPP 服务范围、有界队列和 20 秒请求期限。
+- 改善页面暂停、断连重连及失效结果处理；异常不替换原厂方法结果。
+- 拒绝重复/损坏 TLV 和重复 EQ 槽位，增加回归测试、Lint 和旧证书一致性检查。
 
-**其他更新内容**
-- 继承十段自定义 EQ 编辑/保存、AI 键左右独立读写、空间音频及手势等控制。
-- 三槽位音效管理：读取、创建、切换及受限删除（写入前复核和回包确认机制）。
-- 15 个界面图标替换为原创 SVG + PNG，颜色与原界面接近；去掉从厂商 APK 提取的图片资源。
-- 完善设备重新配对恢复说明、构建步骤、自动测试、Release 签名流程。
+## 验证
 
-**兼容设备**
-- Honor Magic8 Pro / MagicOS 11.0.0.117（Android 17）
-- HUAWEI FreeClip 2 / 7.0.0.526
-- Root、LSPosed API 101；作用域仅 `com.hihonor.audioaccessorymanager`
+JVM 协议/模拟传输回归、3000 组异常字节流、Android 35 Robolectric 布局测试、
+非调试未签名 APK 构建及完整 Lint 的实际结果见 `docs/VALIDATION_REPORT.md`。
+签名产物由维护者使用原 beta.2 私钥生成并验证，源码包和 APK 版本为 22 / 1.1.0-beta.3。
 
-**待验收项**
-- 三槽位创建、切换和删除的当前固件真机结果尚待确认，请谨慎使用。完成 `FINAL_TEST_PLAN.md` 后再将本文件改为正式 Release 说明。
-- AI 键唤醒目标受 MagicOS 控制，系统设置入口不保证改变耳机的唤醒目标。
+## 真机待验
 
-**已知设备识别问题的恢复**
-- 原厂耳机页若报告 `modelId is empty` 并持续加载，曾在取消并重新配对后恢复；详见 `docs/TROUBLESHOOTING.md`。
+历史目标环境：Magic8 Pro / MagicOS 11.0.0.117、FreeClip 2 / 7.0.0.526。
+十段 EQ 与左右 AI 键有历史真机验证；本版新的 Hook 时序、不同原厂音频管理版本、
+真实断连重连以及三槽位创建/切换/删除仍待目标设备验收。
 
-许可：GPL-3.0；上游 HuaweiPods 保留署名。所有产品商标属于各自权利人。
+普通设置及 AI 键动作仍由耳机实际回读确认。AI 键不重定向第三方助手，固件 OTA 不支持。
+布局改动或非中文页面导致锚点不匹配时会跳过注入；深层系统蓝牙阻塞可能需要重启音频管理进程恢复。
+请只在 LSPosed 勾选 `com.hihonor.audioaccessorymanager`。
+
+## 更新与来源
+
+使用原 beta.2 发布证书，versionCode 从 21 递增至 22。
+旧标签/附件保持不变，新标签为 `v1.1.0-beta.3`。
+GPL-3.0-or-later；保留 HuaweiPods / OpenFreebuds 协议研究署名，15 张图标为项目原创资源。
